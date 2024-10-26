@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import datetime
 import math
+import tempfile
 from click.testing import CliRunner
 from rrdparse.main import cli
 
@@ -31,7 +32,7 @@ class TestConvert(unittest.TestCase):
             for typ in ["AVERAGE", "MIN", "MAX"]:
                 opts.append(f"RRA:{typ}:{xff}:{s}:{c}")
         subprocess.call([rrdtool_path, "create", filename, *opts])
-        for i in range(start, start+step*count, step):
+        for i in range(start+step, start+step*count, step):
             val = fn(i)
             subprocess.call([rrdtool_path, "update", filename, f"{i}:{val}"])
 
@@ -40,4 +41,5 @@ class TestConvert(unittest.TestCase):
         def fn(x: float) -> float:
             return math.sin(x/500/math.pi)
         st = int(datetime.datetime(2024, 1, 1).timestamp())
-        self._mkdata("testdata.rrd", st, 300, "name", -1.0, 1.0, 500, fn)
+        with tempfile.NamedTemporaryFile(suffix=".rrd") as tf:
+            self._mkdata(tf.name, st, 300, "name", -1.0, 1.0, 500, fn)
