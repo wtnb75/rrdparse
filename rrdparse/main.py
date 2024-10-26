@@ -20,7 +20,7 @@ def cli(ctx):
 def verbose_option(func):
     @click.option("--verbose/--quiet")
     @functools.wraps(func)
-    def _(verbose, *args, **kwargs):
+    def _(verbose: bool | None, *args, **kwargs):
         from logging import basicConfig
         logfmt = "%(asctime)s %(levelname)s %(message)s"
         if verbose is None:
@@ -38,7 +38,8 @@ def rrdfile_options(func):
     @click.option("--endian", type=click.Choice(["little", "big", "native"]), default="native")
     @click.option("--input", type=click.File("rb"))
     @functools.wraps(func)
-    def _(endian, input, *args, **kwargs):
+    def _(endian: str, input, *args, **kwargs):
+        breakpoint()
         rfp = RrdFile()
         rfp.read(input, endian=endian)
         return func(*args, rrdfile=rfp, **kwargs)
@@ -54,7 +55,7 @@ def rrdfile_options(func):
 @click.option("--tsformat", default="%Y-%m-%d %H:%M:%S")
 @click.option("--ds-filter")
 @click.option("--rra-filter")
-def convert(rrdfile: RrdFile, output, format, tsformat, ds_filter, rra_filter):
+def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, ds_filter: str | None, rra_filter: str | None):
     from collections import defaultdict
     import csv
     import json

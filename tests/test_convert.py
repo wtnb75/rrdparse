@@ -4,6 +4,7 @@ import subprocess
 import datetime
 import math
 import tempfile
+from typing import Callable
 from click.testing import CliRunner
 from rrdparse.main import cli
 
@@ -24,7 +25,8 @@ class TestConvert(unittest.TestCase):
         self.assertEqual(0, res.exit_code)
         self.assertIn("--endian", res.output)
 
-    def _mkdata(self, filename, start, step, name, min, max, count, fn):
+    def _mkdata(self, filename: str, start: float, step: int, name: str, min: float, max: float, count: int,
+                fn: Callable[[float], float]):
         opts = ["--start", str(start), "--step", str(step)]
         opts.append(f"DS:{name}:GAUGE:{step*2}:{min}:{max}")
         xff = 0.5
@@ -33,7 +35,7 @@ class TestConvert(unittest.TestCase):
                 opts.append(f"RRA:{typ}:{xff}:{s}:{c}")
         subprocess.call([rrdtool_path, "create", filename, *opts])
         for i in range(start+step, start+step*count, step):
-            val = fn(i)
+            val = fn(float(i))
             subprocess.call([rrdtool_path, "update", filename, f"{i}:{val}"])
 
     @unittest.skipUnless(rrdtool_path, "rrdtool not installed")

@@ -14,7 +14,7 @@ _log = getLogger(__name__)
 
 
 class BaseIf(metaclass=ABCMeta):
-    prefix_map = {
+    prefix_map: dict[str, str] = {
         'little': '<',
         'big': '>',
         'native': '=',
@@ -59,8 +59,9 @@ class RrUnion(BaseIf):
         return res[0]
 
     @float_val.setter
-    def float_val(self, v: float):
+    def float_val(self, v: float) -> float:
         self.data = struct.pack(self.endian+"d", v)
+        return v
 
     @property
     def int_val(self) -> int:
@@ -68,8 +69,9 @@ class RrUnion(BaseIf):
         return res[0]
 
     @int_val.setter
-    def int_val(self, v: int):
+    def int_val(self, v: int) -> int:
         self.data = struct.pack(self.endian+"Q", v)
+        return v
 
     def __str__(self) -> str:
         if self.int_val == 0:
@@ -188,11 +190,11 @@ class DsHeader(BaseIf):
         return self.param[0].int_val
 
     @property
-    def minval(self) -> int:
+    def minval(self) -> float:
         return self.param[1].float_val
 
     @property
-    def maxval(self) -> int:
+    def maxval(self) -> float:
         return self.param[2].float_val
 
 
