@@ -3,12 +3,11 @@ import sys
 import struct
 import math
 import array
-import fnmatch
 from abc import ABCMeta, abstractmethod
 from logging import getLogger
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Generator
+from typing import Generator, Callable
 
 _log = getLogger(__name__)
 
@@ -486,22 +485,37 @@ class RrdFile(BaseIf):
     def rra_names(self) -> Generator[RraHeader, None, None]:
         yield from self.rrahdr
 
-    def rra_iter(self, dsname: str | None = None, rraname: str | None = None) -> \
+    def rra_iter(self, dsname: Callable | None = None, rraname: Callable | None = None) -> \
             Generator[tuple[DsHeader, RraHeader, array.array, int], None, None]:
         n = 0
         idx = 0
         for i in self.dshdr:
             for j in self.rrahdr:
-                if (dsname is None or fnmatch.fnmatch(i.name, dsname)) and \
-                        (rraname is None or fnmatch.fnmatch(j.name, rraname)):
+                if (dsname is None or dsname(i.name)) and (rraname is None or rraname(j.name)):
                     yield i, j, self.values[idx:idx+j.row_cnt], self.rras[n].prep
                 idx += j.row_cnt
                 n += 1
 
-    def data_iter(self, dsname: str | None = None, rraname: str | None = None):
+    def data_iter(self, dsname: Callable | None = None, rraname: Callable | None = None):
         last_ts = self.livehead.ts
         for ds, rra, data_raw, data_idx in self.rra_iter(dsname, rraname):
             step_ts = self.header.pdp_step * rra.pdp_cnt
             first_ts = int(last_ts) - (rra.row_cnt-1) * step_ts
             yield ds, rra, zip(range(first_ts, first_ts+step_ts*rra.row_cnt, step_ts),
                                data_raw[data_idx+1:] + data_raw[:data_idx+1])
+
+    def ds_iter(self, dsname: Callable):
+        last_ts = self.livehead.ts
+        res: dict[tuple[str, int], list[dict]] = {}
+        for ds, rra, data_raw, data_idx in self.rra_iter(dsname):
+            data = data_raw[data_idx+1:] + data_raw[:data_idx+1]
+            step_ts = self.header.pdp_step * rra.pdp_cnt
+            first_ts = int(last_ts) - (rra.row_cnt-1) * step_ts
+            key = (ds.name, rra.pdp_cnt)
+            if key not in res:
+                res[key] = [
+                    {"ts": t, "datetime": datetime.fromtimestamp(t)}
+                    for t in range(first_ts, first_ts+step_ts*rra.row_cnt, step_ts)]
+            for idx, i in enumerate(data):
+                res[key][idx][rra.name.lower()] = i
+        return res
