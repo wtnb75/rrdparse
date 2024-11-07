@@ -3,7 +3,9 @@ import click
 import datetime
 import math
 import functools
+import fnmatch
 from .parse import RrdFile
+from typing import Callable
 from logging import getLogger
 
 _log = getLogger(__name__)
@@ -39,7 +41,6 @@ def rrdfile_options(func):
     @click.option("--input", type=click.File("rb"))
     @functools.wraps(func)
     def _(endian: str, input, *args, **kwargs):
-        breakpoint()
         rfp = RrdFile()
         rfp.read(input, endian=endian)
         return func(*args, rrdfile=rfp, **kwargs)
@@ -47,15 +48,37 @@ def rrdfile_options(func):
     return _
 
 
+def rrfilter_options(func):
+    @click.option("--ds-filter")
+    @click.option("--rra-filter")
+    @functools.wraps(func)
+    def _(ds_filter, rra_filter, *args, **kwargs):
+        dsfn: Callable | None = None
+        if ds_filter:
+            dsfn = functools.partial(fnmatch.fnmatch, pat=ds_filter)
+        rrfn: Callable | None = None
+        if rra_filter:
+            rrfn = functools.partial(fnmatch.fnmatch, pat=rra_filter)
+        return func(*args, dsfn=dsfn, rrfn=rrfn, **kwargs)
+
+    return _
+
+
+def defjson(o):
+    if hasattr(o, "isoformat"):
+        return o.isoformat()
+    else:
+        return str(o)
+
+
 @cli.command()
 @verbose_option
 @rrdfile_options
-@click.option("--format", type=click.Choice(["rrdcreate", "csv", "json", "rra", "rra-little", "rra-big"]))
+@rrfilter_options
+@click.option("--format", type=click.Choice(["rrdcreate", "csv", "json", "json2", "rra", "rra-little", "rra-big"]))
 @click.option("--output", type=click.File("wb"), default=sys.stdout)
 @click.option("--tsformat", default="%Y-%m-%d %H:%M:%S")
-@click.option("--ds-filter")
-@click.option("--rra-filter")
-def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, ds_filter: str | None, rra_filter: str | None):
+def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, dsfn: Callable | None, rrfn: Callable | None):
     from collections import defaultdict
     import csv
     import json
@@ -64,7 +87,7 @@ def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, ds_filt
     elif format == "csv":
         res = defaultdict(dict)
         names: set[str] = set()
-        for ds, rra, data in rrdfile.data_iter(ds_filter, rra_filter):
+        for ds, rra, data in rrdfile.data_iter(dsfn, rrfn):
             _log.debug("ds=%s/%s/%s rra=%s/pdp=%s/row=%s", ds.name, ds.dst,
                        ds.minimal_heartbeat, rra.name, rra.pdp_cnt, rra.row_cnt)
             name = f"{ds.name}/{rra.name}"
@@ -82,7 +105,7 @@ def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, ds_filt
     elif format == "json":
         res: dict[str, dict[str, list[dict]]] = {}
         names: set[str] = set()
-        for ds, rra, data in rrdfile.data_iter(ds_filter, rra_filter):
+        for ds, rra, data in rrdfile.data_iter(dsfn, rrfn):
             k1 = ds.name
             k2: str = f"{rra.name}/{rra.pdp_cnt}"
             if k1 not in res:
@@ -97,7 +120,10 @@ def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, ds_filt
                         "timestamp": ts,
                         "datetime": datetime.fromtimestamp(ts).isoformat(),
                         "value": value})
-        json.dump(res, output)
+        json.dump(res, output, default=defjson)
+    elif format == "json2":
+        res = rrdfile.ds_iter(dsfn)
+        json.dump({"/".join([str(y) for y in k]): v for k, v in res.items()}, output, default=defjson)
     elif format == "rra":
         rrdfile.write(output, "native")
     elif format == "rra-little":
@@ -109,26 +135,53 @@ def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, ds_filt
 @cli.command()
 @verbose_option
 @rrdfile_options
-@click.option("--ds-filter")
-@click.option("--rra-filter")
-def plot(rrdfile, ds_filter, rra_filter):
+@rrfilter_options
+def plot_matplotlib(rrdfile: RrdFile, dsfn, rrfn):
     import matplotlib.pyplot as plt
     import matplotlib.dates as pltdates
-    pdpcnts = sorted(list({x.pdp_cnt for x in rrdfile.rra_names()}))
-    fig, ax = plt.subplots(len(pdpcnts), 1, layout='constrained')
-    ts = {x: [] for x in pdpcnts}
-    for ds, rra, data in rrdfile.data_iter(ds_filter, rra_filter):
-        kvs = [(k, v) for k, v in data]
-        idx = pdpcnts.index(rra.pdp_cnt)
-        ts = [datetime.datetime.fromtimestamp(x[0]) for x in kvs]
-        vals = [x[1] for x in kvs]
+    data = rrdfile.ds_iter(dsfn)
+    dkeys = sorted(data.keys())
+    fig, ax = plt.subplots(len(dkeys), 1, layout='constrained')
+    for key, v in data.items():
+        idx = dkeys.index(key)
+        name = "/".join([str(x) for x in key])
         ax[idx].grid(True)
-        ax[idx].plot(ts, vals, label=rra.name)
-        ax[idx].set_title(f"{ds.name} / {rra.pdp_cnt}")
-        ax[idx].legend(loc="upper left")
+        ts = [x["datetime"] for x in v]
+        minv = [x["min"] for x in v]
+        maxv = [x["max"] for x in v]
+        avgv = [x["average"] for x in v]
+        ax[idx].fill_between(ts, minv, maxv, alpha=0.3)
+        ax[idx].plot(ts, avgv)
+        ax[idx].set_title(name)
         ax[idx].xaxis.set_minor_formatter(pltdates.DateFormatter("%H:%M"))
         ax[idx].xaxis.set_minor_formatter(pltdates.DateFormatter("\n%Y-%m-%d"))
     plt.show()
+
+
+@cli.command()
+@verbose_option
+@rrdfile_options
+@rrfilter_options
+def plot_plotly(rrdfile, dsfn, rrfn):
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    data = rrdfile.ds_iter(dsfn)
+    dkeys = sorted(data.keys())
+    names = ["/".join([str(x) for x in k]) for k in dkeys]
+    fig = make_subplots(rows=len(dkeys), cols=1, subplot_titles=names)
+    for key, v in data.items():
+        idx = dkeys.index(key)
+        ts = [x["datetime"] for x in v]
+        minv = [x["min"] for x in v]
+        maxv = [x["max"] for x in v]
+        avgv = [x["average"] for x in v]
+        minmax_marker = {"color": "blue", "line": {"color": "blue"}}
+        fig.add_trace(go.Scatter(x=ts, y=minv, fill="none", opacity=0.2, showlegend=False,
+                                 marker=minmax_marker), row=idx+1, col=1)
+        fig.add_trace(go.Scatter(x=ts, y=maxv, fill="tonexty", opacity=0.2,
+                      showlegend=False, marker=minmax_marker), row=idx+1, col=1)
+        fig.add_trace(go.Scatter(x=ts, y=avgv, fill="none", name=names[idx]), row=idx+1, col=1)
+    fig.show()
 
 
 if __name__ == "__main__":
