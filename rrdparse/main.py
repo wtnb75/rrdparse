@@ -132,6 +132,18 @@ def convert(rrdfile: RrdFile, output, format: str, tsformat: str | None, dsfn: C
         rrdfile.write(output, "big")
 
 
+def timerange(td: datetime.timedelta) -> str:
+    if td.days in (1, 2):
+        return "day"
+    elif td.days in (7, 8, 9):
+        return "week"
+    elif 30 <= td.days and td.days <= 60:
+        return "month"
+    elif 365 <= td.days and td.days <= 365*2:
+        return "year"
+    return str(td)
+
+
 @cli.command()
 @verbose_option
 @rrdfile_options
@@ -144,7 +156,7 @@ def plot_matplotlib(rrdfile: RrdFile, dsfn, rrfn):
     fig, ax = plt.subplots(len(dkeys), 1, layout='constrained')
     for key, v in data.items():
         idx = dkeys.index(key)
-        name = "/".join([str(x) for x in key])
+        name = timerange(v[-1]["datetime"]-v[0]["datetime"])
         ax[idx].grid(True)
         ts = [x["datetime"] for x in v]
         minv = [x["min"] for x in v]
@@ -167,20 +179,27 @@ def plot_plotly(rrdfile, dsfn, rrfn):
     from plotly.subplots import make_subplots
     data = rrdfile.ds_iter(dsfn)
     dkeys = sorted(data.keys())
-    names = ["/".join([str(x) for x in k]) for k in dkeys]
+    names = []
+    for key in dkeys:
+        v = data[key]
+        td: datetime.timedelta = v[-1]["datetime"]-v[0]["datetime"]
+        names.append(timerange(td))
     fig = make_subplots(rows=len(dkeys), cols=1, subplot_titles=names)
     for key, v in data.items():
         idx = dkeys.index(key)
         ts = [x["datetime"] for x in v]
+        name = key[0]
         minv = [x["min"] for x in v]
         maxv = [x["max"] for x in v]
         avgv = [x["average"] for x in v]
-        minmax_marker = {"color": "blue", "line": {"color": "blue"}}
+        minmax_marker = {"color": "aqua"}
+        emptyline = {"width": 0}
+        colorline = {"color": "blue"}
         fig.add_trace(go.Scatter(x=ts, y=minv, fill="none", opacity=0.2, showlegend=False,
-                                 marker=minmax_marker), row=idx+1, col=1)
+                                 marker=minmax_marker, line=emptyline), row=idx+1, col=1)
         fig.add_trace(go.Scatter(x=ts, y=maxv, fill="tonexty", opacity=0.2,
-                      showlegend=False, marker=minmax_marker), row=idx+1, col=1)
-        fig.add_trace(go.Scatter(x=ts, y=avgv, fill="none", name=names[idx]), row=idx+1, col=1)
+                      showlegend=False, marker=minmax_marker, line=emptyline), row=idx+1, col=1)
+        fig.add_trace(go.Scatter(x=ts, y=avgv, fill="none", name=name, line=colorline), row=idx+1, col=1)
     fig.show()
 
 
